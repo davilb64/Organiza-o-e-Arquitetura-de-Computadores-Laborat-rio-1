@@ -277,9 +277,9 @@ trata_secao:
 	lbu t5, 1(s1)
 	
 	li t0, 100 # 'd'
-	beq t5, t0, muda_para_data
+	beq t5, t0, verifica_data_ou_dword
 	li t0, 68 # 'D'
-	beq t5, t0, muda_para_data
+	beq t5, t0, verifica_data_ou_dword
 	
 	li t0, 116 # 't'
 	beq t5, t0, muda_para_text
@@ -301,10 +301,25 @@ trata_secao:
 	li t0, 66 # 'B' .BYTE
 	beq t5, t0, muda_para_byte
 	
-	li t0, 115 # 's' .string
-	beq t5, t0, muda_para_string
-	li t0, 83 # 'S' .STRING
-	beq t5, t0, muda_para_string
+	li t0, 115 # 's' 
+	beq t5, t0, muda_para_s
+	li t0, 83 # 'S' 
+	beq t5, t0, muda_para_s
+	
+	li t0, 97 # 'a' 
+	beq t5, t0, muda_para_a
+	li t0, 65 # 'A' 
+	beq t5, t0, muda_para_a
+	
+	j instrucao_nao_existe
+
+verifica_data_ou_dword: # 'd'/'D' pode ser .data ou .dword: olha o 3o caractere
+	lbu t6, 2(s1) # 'a' em .data, 'w' em .dword
+	li t0, 119 # 'w'
+	beq t6, t0, muda_para_dword
+	li t0, 87 # 'W'
+	beq t6, t0, muda_para_dword
+	j muda_para_data
 	
 muda_para_data:
 	la t1, secao_atual
@@ -330,10 +345,75 @@ muda_para_byte:
 	addi s1, s1, 5 # incrementa o ponteiro pra pular ".byte"
 	j implementacao_byte
 
+muda_para_s:
+	lbu t6, 2(s1)
+
+	li t0, 116 # 't' 
+	beq t6, t0, muda_para_string
+	li t0, 84 # 'T' 
+	beq t6, t0, muda_para_string
+	
+	li t0, 112 # 'p' 
+	beq t6, t0, muda_para_space
+	li t0, 80 # 'P' 
+	beq t6, t0, muda_para_space
+
+	j instrucao_nao_existe
+	
+muda_para_a:
+	lbu t6, 2(s1)
+	
+	li t0, 115 # 's' 
+	beq t6, t0, muda_para_asci
+	li t0, 83 # 'S' 
+	beq t6, t0, muda_para_asci
+	
+	li t0, 108 # 'l' 
+	beq t6, t0, muda_para_align
+	li t0, 76 # 'L' 
+	beq t6, t0, muda_para_align
+
+	j instrucao_nao_existe
+	
+muda_para_asci:
+	lbu t6, 5(s1)
+	
+	li t0, 105 # 'i' 
+	beq t6, t0, muda_para_ascii
+	li t0, 73 # 'I' 
+	beq t6, t0, muda_para_ascii
+	
+	li t0, 122 # 'z' 
+	beq t6, t0, muda_para_asciz
+	li t0, 90 # 'Z' 
+	beq t6, t0, muda_para_asciz
+	
+	j instrucao_nao_existe
 muda_para_string:
-	addi s1, s1, 7 # incrementa o ponteiro pra pular ".byte"
+	addi s1, s1, 7 # incrementa o ponteiro pra pular ".string"
 	j implementacao_string
 
+muda_para_space:
+	addi s1, s1, 6 # incrementa o ponteiro pra pular ".space"
+	j implementacao_space
+	
+muda_para_dword:
+	addi s1, s1, 6 # incrementa o ponteiro pra pular ".dword"
+	j implementacao_dword
+
+muda_para_align:
+	addi s1, s1, 6 # incrementa o ponteiro pra pular ".align"
+	j implementacao_align
+	
+muda_para_ascii:
+	addi s1, s1, 6 # incrementa o ponteiro pra pular ".ascii"
+	j implementacao_ascii
+	
+muda_para_asciz: 
+	addi s1, s1, 6 # incrementa o ponteiro pra pular ".asciz"
+	j implementacao_asciz
+	
+	
 identifica_instrucao:
 	lbu t5, 0(a0)
 	
@@ -967,21 +1047,265 @@ implementacao_AUIPC:
     	
 # implementacoes data
 implementacao_word:
-	# TODO ler os numeros e quebrar em 4 bytes, chamar processa_byte_data para cada byte
+	jal ra, le_numero # lê o numero da linha
+
+	# primeiro byte (menos significativo)
+	add t6, a0, zero
+	andi a0, t6, 0xFF
+	jal ra, processa_byte_data
+	
+	# segundo byte
+	srli a0, t6, 8 # anda registrador para entrada do segundo byte
+	andi a0, a0, 0xFF
+	jal ra, processa_byte_data
+	
+	# terceiro byte
+	srli a0, t6, 16
+	andi a0, a0, 0xFF
+	jal ra, processa_byte_data
+	
+	# quarto byte (mais significativo
+	srli a0, t6, 24
+	andi a0, a0, 0xFF
+	jal ra, processa_byte_data
+
+verifica_virgula_word:
+	lbu t0, 0(s1)
+		
+	li t6, 44 # ','
+	beq t6, t0, tem_virgula_word
+	
+	li t6, 32 # ' '
+	beq t6, t0, pula_espaco_word
+	
+	li t6, 9 # '\t'
+	beq t6, t0, pula_espaco_word
+	
 	j procura_quebra_linha
 	
+pula_espaco_word:
+	addi s1, s1, 1 # avanca 1 char
+	j verifica_virgula_word
+	
+tem_virgula_word:
+	addi, s1, s1, 1 # consome a virgula
+	j implementacao_word
+	
 implementacao_half:
-	# TODO ler os numeros e quebrar em 2 bytes, chamar processa_byte_data para cada byte
+	jal ra, le_numero # lê o numero da linha
+
+	# primeiro byte (menos significativo)
+	add t6, a0, zero
+	andi a0, t6, 0xFF
+	jal ra, processa_byte_data
+	
+	# segundo byte (mais significativo)
+	srli a0, t6, 8 # anda registrador para entrada do segundo byte
+	andi a0, a0, 0xFF
+	jal ra, processa_byte_data
+
+verifica_virgula_half:
+	lbu t0, 0(s1)
+		
+	li t6, 44 # ','
+	beq t6, t0, tem_virgula_half
+	
+	li t6, 32 # ' '
+	beq t6, t0, pula_espaco_half
+	
+	li t6, 9 # '\t'
+	beq t6, t0, pula_espaco_half
+	
 	j procura_quebra_linha
+	
+pula_espaco_half:
+	addi s1, s1, 1 # avanca 1 char
+	j verifica_virgula_half
+	
+tem_virgula_half:
+	addi, s1, s1, 1 # consome a virgula
+	j implementacao_half
 
 implementacao_byte:
-	# TODO ler os numero, chamar processa_byte_data para o byte
-	j procura_quebra_linha
+	jal ra, le_numero # lê o numero da linha
 
+	# único byte
+	add t6, a0, zero
+	andi a0, t6, 0xFF
+	jal ra, processa_byte_data
+	
+verifica_virgula_byte:
+	lbu t0, 0(s1)
+		
+	li t6, 44 # ','
+	beq t6, t0, tem_virgula_byte
+	
+	li t6, 32 # ' '
+	beq t6, t0, pula_espaco_byte
+	
+	li t6, 9 # '\t'
+	beq t6, t0, pula_espaco_byte
+	
+	j procura_quebra_linha
+	
+pula_espaco_byte:
+	addi s1, s1, 1 # avanca 1 char
+	j verifica_virgula_byte
+	
+tem_virgula_byte:
+	addi, s1, s1, 1 # consome a virgula
+	j implementacao_byte
+	
+implementacao_dword:
+	jal ra, le_numero
+	add t6, a0, zero # salva parte baixa em t6
+	srai s5, t6, 31 # parte alta (ext de sinal) em s5 (nao usar t5: processa_byte_data o sobrescreve)
+	
+	# primeiro byte (menos significativo)
+	andi a0, t6, 0xFF
+	jal ra, processa_byte_data
+	
+	# segundo byte
+	srli a0, t6, 8 # anda registrador para entrada do segundo byte
+	andi a0, a0, 0xFF
+	jal ra, processa_byte_data
+	
+	# terceiro byte
+	srli a0, t6, 16
+	andi a0, a0, 0xFF
+	jal ra, processa_byte_data
+	
+	# quarto byte (mais significativo primeira word
+	srli a0, t6, 24
+	andi a0, a0, 0xFF
+	jal ra, processa_byte_data
+
+	# primeiro byte (menos significativo)
+	andi a0, s5, 0xFF
+	jal ra, processa_byte_data
+	
+	# segundo byte
+	srli a0, s5, 8 # anda registrador para entrada do segundo byte
+	andi a0, a0, 0xFF
+	jal ra, processa_byte_data
+	
+	# terceiro byte
+	srli a0, s5, 16
+	andi a0, a0, 0xFF
+	jal ra, processa_byte_data
+	
+	# quarto byte (mais significativo
+	srli a0, s5, 24
+	andi a0, a0, 0xFF
+	jal ra, processa_byte_data
+	
+verifica_virgula_dword:
+	lbu t0, 0(s1)
+		
+	li t6, 44 # ','
+	beq t6, t0, tem_virgula_dword
+	
+	li t6, 32 # ' '
+	beq t6, t0, pula_espaco_dword
+	
+	li t6, 9 # '\t'
+	beq t6, t0, pula_espaco_dword
+	
+	j procura_quebra_linha
+	
+pula_espaco_dword:
+	addi s1, s1, 1 # avanca 1 char
+	j verifica_virgula_dword
+	
+tem_virgula_dword:
+	addi, s1, s1, 1 # consome a virgula
+	j implementacao_dword
+	
+implementacao_space:
+	jal ra, le_numero
+	add s5, a0, zero # contador
+
+loop_imp_space:
+	ble s5, zero, fim_imp_space
+	li a0, 0
+	jal ra, processa_byte_data
+	addi s5, s5, -1
+	j loop_imp_space
+	
+fim_imp_space:
+	j procura_quebra_linha
+	
+implementacao_align:
+	jal ra, le_numero
+	
+	li s5, 1
+	sll s5, s5, a0
+	addi s5, s5, -1
+	
+loop_align:
+	la t0, pc_data
+	lw t1, 0(t0)
+	
+	and t2, t1, s5
+	beq t2, zero, fim_align
+	
+	li a0, 0
+	jal ra, processa_byte_data
+	j loop_align
+	
+fim_align:
+	j procura_quebra_linha
+	
+# strings
+
+
+
+
+# finalizador 0x00	
+implementacao_asciz:	
 implementacao_string:
-	# TODO ler as letras e ate o nulo (0x00), chamar processa_byte_data para cada char
-	j procura_quebra_linha
+	li s5, 1 # flag pra adicionar o null no fim
+	j busca_primeira_aspa
 
+implementacao_ascii:
+	li s5, 0 # flag pra não adicionar o null no fim
+
+busca_primeira_aspa:
+	lbu t0, 0(s1) 
+	li t1, 34 # ' " '
+	beq t0, t1, achou_aspa_ini
+	li t1, 39 # ' ' '
+	beq t0, t1, achou_aspa_ini
+	addi s1, s1, 1 # avanca busca
+	j busca_primeira_aspa
+	
+achou_aspa_ini:
+	addi, s1, s1, 1 # pula aspa inicial
+	
+loop_le_string:
+	lbu t0, 0(s1)
+	
+	li t1, 34 # ' " '
+	beq t0, t1, achou_aspa_fim
+	li t1, 39 # ' ' '
+	beq t0, t1, achou_aspa_fim
+	
+	add a0, zero, t0 # processa caractere lido
+	jal ra, processa_byte_data
+	
+	addi s1, s1, 1 # avanca ponteiro
+	j loop_le_string
+	
+achou_aspa_fim:
+	addi s1, s1, 1 # pula aspa fim
+	
+	beq s5, zero, finaliza_string # verifica necessidade de adicionar 0x00
+	li a0, 0 # manda 0x00
+	jal ra, processa_byte_data
+	
+finaliza_string:
+	j procura_quebra_linha
+	
 # -- temporario
 teste:
 	# olha secao atual
@@ -1057,6 +1381,9 @@ comeca_segunda:
 	sw zero, 0(t0)
 	
 	la t0, secao_atual # retorna para o comeco da . data
+	sw zero, 0(t0)
+	
+	la t0, ponteiro_tabela # zera o ponteiro da tabela de rotulos
 	sw zero, 0(t0)
 	
 	j inicia_scanner
@@ -1347,3 +1674,121 @@ pb_fim:
 	addi sp, sp, 16
 	jr ra
 	
+# procedimento le_numero
+# s1 = ponteiro para a string atual
+# a0 = saida de numero de 32 bits convertido
+# s1 = saida do ponteiro depois do numero
+le_numero:
+	addi sp, sp, -16 # espaco na pilha
+	sw ra, 12(sp) # guarda retorno
+	sw s3, 8(sp) # guarda cont de s3 para usarmos como sinal
+	sw s4, 4(sp) # guarda cont de s3 para usarmos como acumulador
+	
+	li s3, 0 # colocamos 0 como positivo e 1 como negativo, pra o caso padrão ser positivo
+	li s4, 0
+	
+pula_espaco_num:
+	lbu t0, 0(s1)
+	li t1, 32 # ' '
+	beq t0, t1, avanca_esp_num
+	li t1, 9 # '\t' cr
+	beq t0, t1, avanca_esp_num
+	j checa_sinal
+	
+avanca_esp_num:
+	addi s1, s1, 1
+	j pula_espaco_num
+	
+checa_sinal:
+	li t1, 45 # '-'
+	bne t0, t1, checa_hex 
+	li s3, 1 # NEGATIVO!
+	addi s1, s1,1 # pula o '-'
+	lbu t0, 0(s1)
+	
+checa_hex:
+	li t1, 48 # '0'
+	bne t0, t1, loop_dec # não é hex
+	lbu t1, 1(s1)
+	li t2, 120 # 'x'
+	beq t1, t2, eh_hex
+	li t2, 88 # 'X'
+	beq t1, t2, eh_hex
+	j loop_dec # não é hex
+	
+eh_hex:
+	addi s1, s1, 2 # pula '0x'
+	
+loop_hex_num: # loop pra ver se o numero acabou com ' ', ',','NULL', '\n'
+	lbu t0, 0(s1)
+	li t1, 32 # ' '
+	beq t0, t1, fim_numero
+	li t1, 44 # ','
+	beq t0, t1, fim_numero
+	li t1, 10 # '\n'
+	beq t0, t1, fim_numero
+	li t1, 13 # '\r'
+	beq t0, t1, fim_numero
+	beq t0, zero, fim_numero # null
+	
+	slli s4, s4, 4 # s4 = 4 * s4, pois significa que o ultimo numero que lemos é mais significativo que o posterior
+	
+	li t1, 57 # '9'
+	bgt t0, t1, hex_letra
+	addi t0, t0, -48 # converte num de ascii pra decimal
+	j hex_soma
+	
+hex_letra:
+	li t1, 97 # 'a'
+	bge t0, t1, hex_min # letra minuscula
+	addi t0, t0, -55 # converte letra de ascii pra decimal
+	j hex_soma
+
+hex_min:
+	addi t0, t0, -87 # converte letra min de ascii pra decimal
+	
+hex_soma:
+	add s4, s4, t0 # acumula
+	addi s1, s1, 1 # ponteiro pra frente
+	j loop_hex_num
+			
+loop_dec: #trata decimais
+	lbu t0, 0(s1)
+	li t1, 32 # ' '
+	beq t0, t1, fim_numero
+	li t1, 44 # ','
+	beq t0, t1, fim_numero
+	li t1, 10 # '\n'
+	beq t0, t1, fim_numero
+	li t1, 13 # '\r'
+	beq t0, t1, fim_numero
+	beq t0, zero, fim_numero # null
+	
+	li t1, 10
+	mul s4, s4, t1 # s4 = s4 * 10 (sistema posicional)
+	addi t0, t0, -48 # converte num de ascii pra decimal
+	add s4, s4, t0
+	
+	addi s1, s1, 1
+	j loop_dec
+	
+fim_numero:
+	beq s3, zero, retorna_num # verifica se é negativo
+	# complemento de 2
+	xori s4, s4, 0xFFFFFFFF # mascara, onde tem 0 vira 1 e onde tem 1 vira 0
+	addi s4, s4, 1 # comp de 1
+	
+retorna_num:
+	add a0, s4, zero # resultado final em a0
+	
+	#retorno de pilha
+	lw s4, 4(sp)
+	lw s3, 8(sp)
+	lw ra, 12(sp)
+	addi sp, sp, 16
+	jr ra
+	
+	
+	
+				
+
