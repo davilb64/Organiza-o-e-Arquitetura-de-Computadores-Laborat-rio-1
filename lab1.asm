@@ -1787,8 +1787,123 @@ retorna_num:
 	lw ra, 12(sp)
 	addi sp, sp, 16
 	jr ra
-	
-	
-	
-				
 
+# procedimento le_reg
+# s1 = ponteiro para o endereco atual do buffer
+# a0 = saida: numero do registrador
+# s1 = saida do ponteiro depois do numero
+le_reg:
+	addi sp, sp, -16 # espaco na pilha
+	sw ra, 12(sp) # guarda retorno
+	sw s3, 8(sp)
+	li a0, 0x00
+
+pula_espaco_reg: # pula espacos em branco até encontrar um registrador
+	lbu t0, 0(s1)
+	li t1, 32 # ' '
+	beq t0, t1, avanca_esp_reg
+	li t1, 9 # '\t' cr
+	beq t0, t1, avanca_esp_reg
+	j identifica_reg
+	
+avanca_esp_reg:
+	addi s1, s1, 1
+	j pula_espaco_reg
+	
+identifica_reg:
+	li t1, 120 # 'x'
+	bne t0, t1, checa_a
+	addi s1, s1,1 # pula o 'x'
+	jal ra, extrai_sufixo
+	add a0, s3, zero
+	j fim_le_reg
+
+checa_a: # (a0 a a7)
+	li t1, 97 # 'a'
+	bne t0, t1, checa_t
+	addi s1, s1, 1 # consome 'a'
+	jal ra, extrai_sufixo
+	addi a0, s3, 10 # aN = N + 10
+	j fim_le_reg
+	
+checa_t: # (t0-t2 e t3-t6)
+	li t1, 116 # 't'
+	bne t0, t1, checa_s
+	addi s1, s1, 1
+	jal ra, extrai_sufixo
+	
+	# t0-t2 = x5-x7
+	li t1, 2
+	bgt s3, t1, calc_t3_t6
+	addi a0, s3, 5
+	j fim_le_reg
+	
+calc_t3_t6:
+	addi a0, s3, 25
+	j fim_le_reg
+	
+checa_s: # (s0-s11 e sp)
+	li t1, 115 # 's'
+	bne t0, t1, checa_r
+	
+	lbu t1, 1(s1)
+	li t2, 112 # 'p'
+	beq t1, t2, reg_sp
+	
+	addi s1, s1, 1 # se era apenas s, consome o s
+	jal ra, extrai_sufixo
+	li t1, 1
+	bgt s3, t1, calc_s2_s11
+	addi a0, s3, 8 # s0 a s1 = x8 - x9
+	
+calc_s2_s11:
+	addi a0, s3, 16
+	j fim_le_reg
+	
+reg_sp:
+	addi s1, s1, 2 # consome sp
+	li a0, 2
+	j fim_le_reg
+	
+checa_r: # verifica ra
+	li t1, 114 # 'r'
+	bne t0, t1, checa_z
+	addi s1, s1, 2 # consome
+	li a0, 1
+	j fim_le_reg
+	
+checa_z: # sempre que chegar aqui, consideramos zero
+	addi s1, s1, 4 # consome 'zero'
+	li a0, 0
+	
+fim_le_reg:
+	lw s3, 8(sp)
+	lw ra, 12(sp)
+	addi sp, sp, 16
+	jr ra
+
+# procedimento extrai_sufixo
+# s1 = ponteiro do primeiro num
+# s3 = saida do inteiro lido	
+extrai_sufixo:
+	li s3, 0 # acumulador zerado
+	
+loop_sufixo:
+	lbu t0, 0(s1)
+	
+	li t1, 48 # '0'
+	blt t0, t1, fim_sufixo # se for menor que zero, finaliza
+	li t1, 57 # '9'
+	blt t0, t1, fim_sufixo 
+	
+	li t1, 10
+	mul s3, s3, t1 # sistema posicional
+	
+	addi t0, t0, -48 # char pra decimal
+	add s3, s3, t0
+	
+	addi s1, s1, 1
+	j loop_sufixo
+	
+fim_sufixo:
+	jr ra
