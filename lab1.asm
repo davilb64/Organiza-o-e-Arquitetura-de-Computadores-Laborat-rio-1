@@ -188,8 +188,10 @@ inicia_nova_palavra:
 le_char:
 	lbu t0, 0(s1) # carrega um char por vez
 	
-	beq zero, t0, fim_arquivo # fim arquivo
-	
+	bne zero, t0, continua_le_char
+	j fim_arquivo
+
+continua_le_char:
 	li t1, 58 # ':'
 	beq t0, t1, rotulo # se o char eh ':', pula pra tratamento de rotulo
 	
@@ -313,8 +315,8 @@ trata_secao:
 	
 	j instrucao_nao_existe
 
-verifica_data_ou_dword: # 'd'/'D' pode ser .data ou .dword: olha o 3o caractere
-	lbu t6, 2(s1) # 'a' em .data, 'w' em .dword
+verifica_data_ou_dword: # 'd'/'D' pode ser .data ou .dword: olha o 3 caractere
+	lbu t6, 2(s1) # 'a' em .data 'w' em .dword
 	li t0, 119 # 'w'
 	beq t6, t0, muda_para_dword
 	li t0, 87 # 'W'
@@ -455,8 +457,10 @@ identifica_instrucao:
 instrucao_nao_existe:
 	# futuramente colocar um print
     	lbu t0, 0(s1)
-    	beq t0, zero, exit # fim de arquivo
-    
+    	bne t0, zero, continua_nao_existe
+	j exit
+   
+continua_nao_existe: 
     	li t1, 10 # '\n'
    	 beq t0, t1, quebra_linha 
     
@@ -870,44 +874,255 @@ mne_AUIPC:
 
 # implementacaoes:
 implementacao_LW:
-	jal ra, verifica_primeira_passagem
+    	jal ra, verifica_primeira_passagem
 	li t0, 1
 	beq a0, t0, procura_quebra_linha
 
-	la a0, str_lw
-    	j teste
+	jal ra, le_reg # le rd
+	add s3, a0, zero
+	jal ra, verifica_virgula_instrucao
+
+	jal ra, le_numero # le offset
+	add s5, a0, zero
+
+busca_abre_par_lw:
+	lbu t0, 0(s1)
+	li t1, 40 # '('
+	beq t0, t1, achou_abre_par_lw
+	addi s1, s1, 1
+	j busca_abre_par_lw
+achou_abre_par_lw:
+	addi s1, s1, 1 
+
+	jal ra, le_reg # le rs1
+	add s4, a0, zero
+
+busca_fecha_par_lw:
+	lbu t0, 0(s1)
+	li t1, 41 # ')'
+	beq t0, t1, achou_fecha_par_lw
+	addi s1, s1, 1
+	j busca_fecha_par_lw
+achou_fecha_par_lw:
+	addi s1, s1, 1 
+
+	li t0, 0x03 # opcode do LW
+	
+	slli s3, s3, 7 
+	or t0, t0, s3
+	
+	li t1, 0x2 # funct3 do LW È 2
+	slli t1, t1, 12
+	or t0, t0, t1
+	
+	slli s4, s4, 15 
+	or t0, t0, s4
+	
+	li t1, 0xFFF
+	and s5, s5, t1 
+	slli s5, s5, 20 
+	or t0, t0, s5
+	
+	add a0, t0, zero
+	jal ra, grava_linha_mif
+	j procura_quebra_linha
     	
 implementacao_OR:
-	jal ra, verifica_primeira_passagem
+	jal ra, verifica_primeira_passagem # verifica se estamos ainda na primeira passagem
 	li t0, 1
 	beq a0, t0, procura_quebra_linha
 	
-	la a0, str_or
-    	j teste
+	# le rd (onde: mne rd, rs1, rs2)
+	jal ra, le_reg
+	add s3, a0, zero # s3 = rd
+	
+	# consome virgula
+	jal ra, verifica_virgula_instrucao
+	
+	# le rs1
+	jal ra, le_reg
+	add s4, a0, zero # s4 = rs1
+	
+	# consome virgula
+	jal ra, verifica_virgula_instrucao
+	
+	# le rs1
+	jal ra, le_reg
+	add s5, a0, zero # s4 = rs1
+	
+	# montagem da instrucao
+	li t0, 0x33 # opcode 0110011 -> bit final, entao sem deslocamento
+	
+	slli s3, s3, 7 # empurra rd para o bit 7
+	or t0, t0, s3 # carimba s3 em t0
+	
+	li t1, 0x6 # funct3 do or È 6
+	slli t1, t1, 12 # funct3 no bit 12
+	or t0, t0, t1 # carimba em t0
+	
+	slli s4, s4, 15 # empurra rs1 para o bit 15
+	or t0, t0, s4 # carimba s4 em t0
+	
+	slli s5, s5, 20 # empurra rs2 para o bit 20
+	or t0, t0, s5 # carimba s5 em t0
+	
+	# funct7 … zero
+	
+	add a0, t0, zero # instrucao finalizada em a0
+	jal ra, grava_linha_mif
+	
+	j procura_quebra_linha
 
 implementacao_SW:
-	jal ra, verifica_primeira_passagem
+	jal ra, verifica_primeira_passagem # verifica se estamos ainda na primeira passagem
 	li t0, 1
 	beq a0, t0, procura_quebra_linha
 	
-	la a0, str_sw
-    	j teste
+	# instrucoes do tipo s tem que ter o tratamento de offsets
+	jal ra, le_reg
+	add s5, a0, zero # rs2
+	jal ra, verifica_virgula_instrucao
+	
+	jal ra, le_numero
+	add s3, a0, zero # offset
+	
+busca_abre_par_sw: # consome o parenteses
+	lbu t0, 0(s1)
+	li t1, 40 # '('
+	beq t0, t1, achou_abre_par_sw
+	addi s1, s1, 1
+	j busca_abre_par_sw
+
+achou_abre_par_sw:
+	addi s1, s1, 1
+	
+	jal ra, le_reg # le registrador de dentro do parenteses
+	add s4, a0, zero # s4 = rs1
+	
+busca_fecha_par_sw: # consome o parenteses
+	lbu t0, 0(s1)
+	li t1, 41 # ')'
+	beq t0, t1, achou_fecha_par_sw
+	addi s1, s1, 1
+	j busca_fecha_par_sw
+
+achou_fecha_par_sw:
+	addi s1, s1, 1	
+	
+	# montagem opcode -> 0x23, funct3 -> 0x2
+	li t0, 0x23
+	
+	andi t1, s3, 0x1F # apenas os 5 bits baixos nesse trecho
+	slli t1, t1, 7 # offset no bit 7
+	or t0, t0, t1 # carimba
+	
+	li t1, 0x2 # funct 3
+	slli t1, t1, 12 # no bit 12
+	or t0, t0, t1 # carimba
+	
+	slli s4, s4, 15 # rs1 no bit 15
+	or t0, t0, s4 # carimba
+	
+	slli s5, s5, 20 # rs2 no bit 20
+	or t0, t0, s5 # carimba
+	
+	li t2, 0xFE0
+	and t1, s3, t2 # restante dos bits imediatos
+	slli t1, t1, 20 # desloca apenas 20 pois 20 + 5 = 25
+	or t0, t0, t1 # carimba
+	
+	add a0, t0, zero
+	jal ra, grava_linha_mif
+	
+	j procura_quebra_linha
 
 implementacao_ADD:
-	jal ra, verifica_primeira_passagem
+	jal ra, verifica_primeira_passagem # verifica se estamos ainda na primeira passagem
 	li t0, 1
 	beq a0, t0, procura_quebra_linha
 	
-	la a0, str_add
-    	j teste
+	# le rd (onde: mne rd, rs1, rs2)
+	jal ra, le_reg
+	add s3, a0, zero # s3 = rd
+	
+	# consome virgula
+	jal ra, verifica_virgula_instrucao
+	
+	# le rs1
+	jal ra, le_reg
+	add s4, a0, zero # s4 = rs1
+	
+	# consome virgula
+	jal ra, verifica_virgula_instrucao
+	
+	# le rs1
+	jal ra, le_reg
+	add s5, a0, zero # s4 = rs1
+	
+	# montagem da instrucao
+	li t0, 0x33 # opcode 0110011 -> bit final, entao sem deslocamento
+	
+	slli s3, s3, 7 # empurra rd para o bit 7
+	or t0, t0, s3 # carimba s3 em t0
+	
+	slli s4, s4, 15 # empurra rs1 para o bit 15
+	or t0, t0, s4 # carimba s4 em t0
+	
+	slli s5, s5, 20 # empurra rs2 para o bit 20
+	or t0, t0, s5 # carimba s5 em t0
+	
+	# funct7 e funct3 … zero
+	
+	add a0, t0, zero # instrucao finalizada em a0
+	jal ra, grava_linha_mif
+	
+	j procura_quebra_linha
     	
 implementacao_AND:
-	jal ra, verifica_primeira_passagem
+	jal ra, verifica_primeira_passagem # verifica se estamos ainda na primeira passagem
 	li t0, 1
 	beq a0, t0, procura_quebra_linha
 	
-	la a0, str_and
-    	j teste
+	# le rd (onde: mne rd, rs1, rs2)
+	jal ra, le_reg
+	add s3, a0, zero # s3 = rd
+	
+	# consome virgula
+	jal ra, verifica_virgula_instrucao
+	
+	# le rs1
+	jal ra, le_reg
+	add s4, a0, zero # s4 = rs1
+	
+	# consome virgula
+	jal ra, verifica_virgula_instrucao
+	
+	# le rs1
+	jal ra, le_reg
+	add s5, a0, zero # s4 = rs1
+	
+	# montagem da instrucao
+	li t0, 0x33 # opcode 0110011 -> bit final, entao sem deslocamento
+	
+	slli s3, s3, 7 # empurra rd para o bit 7
+	or t0, t0, s3 # carimba s3 em t0
+	
+	li t1, 0x7 # funct3 do and È 7
+	slli t1, t1, 12 # funct3 no bit 12
+	or t0, t0, t1 # carimba em t0
+	
+	slli s4, s4, 15 # empurra rs1 para o bit 15
+	or t0, t0, s4 # carimba s4 em t0
+	
+	slli s5, s5, 20 # empurra rs2 para o bit 20
+	or t0, t0, s5 # carimba s5 em t0
+	
+	# funct7 … zero
+	
+	add a0, t0, zero # instrucao finalizada em a0
+	jal ra, grava_linha_mif
+	
+	j procura_quebra_linha
 
 implementacao_BNE:
 	jal ra, verifica_primeira_passagem
@@ -938,80 +1153,426 @@ implementacao_LUI:
 	li t0, 1
 	beq a0, t0, procura_quebra_linha
 	
-	la a0, str_lui
-    	j teste
+	jal ra, le_reg
+	add s3, a0, zero # rd
+	jal ra, verifica_virgula_instrucao
+	
+	jal ra, le_numero
+	add s4, a0, zero # imediato
+	
+	li t0, 0x37 # opcode LUI (0110111)
+	
+	slli s3, s3, 7 # rd no bit 7
+	or t0, t0, s3
+	
+	li t1, 0xFFFFF # LUI usa 20 bits
+	and s4, s4, t1
+	slli s4, s4, 12 # imediato carrega direto nos bits 31-32
+	or t0, t0, s4
+	
+	add a0, t0, zero
+	jal ra, grava_linha_mif
+	j procura_quebra_linha
 
 implementacao_LHU:
 	jal ra, verifica_primeira_passagem
 	li t0, 1
 	beq a0, t0, procura_quebra_linha
+
+	jal ra, le_reg 
+	add s3, a0, zero
+	jal ra, verifica_virgula_instrucao
+
+	jal ra, le_numero 
+	add s5, a0, zero
+
+busca_abre_par_lhu:
+	lbu t0, 0(s1)
+	li t1, 40 # '('
+	beq t0, t1, achou_abre_par_lhu
+	addi s1, s1, 1
+	j busca_abre_par_lhu
+achou_abre_par_lhu:
+	addi s1, s1, 1 
+
+	jal ra, le_reg 
+	add s4, a0, zero
+
+busca_fecha_par_lhu:
+	lbu t0, 0(s1)
+	li t1, 41 # ')'
+	beq t0, t1, achou_fecha_par_lhu
+	addi s1, s1, 1
+	j busca_fecha_par_lhu
+achou_fecha_par_lhu:
+	addi s1, s1, 1 
+
+	li t0, 0x03 # opcode do LHU
 	
-	la a0, str_lhu
-    	j teste
+	slli s3, s3, 7 
+	or t0, t0, s3
+	
+	li t1, 0x5 # funct3 do LHU È 5
+	slli t1, t1, 12
+	or t0, t0, t1
+	
+	slli s4, s4, 15 
+	or t0, t0, s4
+	
+	li t1, 0xFFF
+	and s5, s5, t1 
+	slli s5, s5, 20 
+	or t0, t0, s5
+	
+	add a0, t0, zero
+	jal ra, grava_linha_mif
+	j procura_quebra_linha
 
 implementacao_ORI:
 	jal ra, verifica_primeira_passagem
 	li t0, 1
 	beq a0, t0, procura_quebra_linha
 	
-	la a0, str_ori
-    	j teste
+	# formato tipo i: mne rd, rs1, I
+	jal ra, le_reg # le rd
+	add s3, a0, zero # s3 = rd
+	jal ra, verifica_virgula_instrucao
+	
+	jal ra, le_reg # le rs1
+	add s4, a0, zero # s4 = rs1
+	jal ra, verifica_virgula_instrucao
+	
+	jal ra, le_numero # le I
+	add s5, a0, zero # s5 = I
+	
+	li t0, 0x13 # opcode -> 0010011 na pos 0
+	
+	li t1, 0x6 # funct3 do ori È 6
+	slli t1, t1, 12 # funct3 no bit 12
+	or t0, t0, t1 # carimba em t0
+	
+	slli s3, s3, 7 # rd para bit 7
+	or t0, t0, s3 # carimba
+	
+	slli s4, s4, 15 # rs1 para bit 15
+	or t0, t0, s4 # carimba rs1
+	
+	# nas instrucao tipo I, o imediato deve ter apenas 12 bits, consideraremos apenas os menos significativos
+	li t1, 0xFFF # 12 bits
+	and s5, s5, t1 # apenas onde temos bits 1 (nas 12 ultimas posicoes) ficar„o no registrador
+	slli s5, s5, 20 # pos 20
+	or t0, t0, s5 # carimba I
+	
+	add a0, t0, zero
+	jal ra, grava_linha_mif
+	
+	j procura_quebra_linha
 
 implementacao_SUB:
-	jal ra, verifica_primeira_passagem
+	jal ra, verifica_primeira_passagem # verifica se estamos ainda na primeira passagem
 	li t0, 1
 	beq a0, t0, procura_quebra_linha
 	
-	la a0, str_sub
-    	j teste
+	# le rd (onde: mne rd, rs1, rs2)
+	jal ra, le_reg
+	add s3, a0, zero # s3 = rd
+	
+	# consome virgula
+	jal ra, verifica_virgula_instrucao
+	
+	# le rs1
+	jal ra, le_reg
+	add s4, a0, zero # s4 = rs1
+	
+	# consome virgula
+	jal ra, verifica_virgula_instrucao
+	
+	# le rs1
+	jal ra, le_reg
+	add s5, a0, zero # s4 = rs1
+	
+	# montagem da instrucao
+	li t0, 0x33 # opcode 0110011 -> bit final, entao sem deslocamento
+	
+	slli s3, s3, 7 # empurra rd para o bit 7
+	or t0, t0, s3 # carimba s3 em t0
+	
+	li t1, 0x20 # funct7 do sub È 0x20
+	slli t1, t1, 25 # funct7 no bit 12
+	or t0, t0, t1 # carimba em t0
+	
+	slli s4, s4, 15 # empurra rs1 para o bit 15
+	or t0, t0, s4 # carimba s4 em t0
+	
+	slli s5, s5, 20 # empurra rs2 para o bit 20
+	or t0, t0, s5 # carimba s5 em t0
+	
+	# funct3 … zero
+	
+	add a0, t0, zero # instrucao finalizada em a0
+	jal ra, grava_linha_mif
+	
+	j procura_quebra_linha
 
 implementacao_SLT:
-	jal ra, verifica_primeira_passagem
+	jal ra, verifica_primeira_passagem # verifica se estamos ainda na primeira passagem
 	li t0, 1
 	beq a0, t0, procura_quebra_linha
 	
-	la a0, str_slt
-    	j teste
+	# le rd (onde: mne rd, rs1, rs2)
+	jal ra, le_reg
+	add s3, a0, zero # s3 = rd
+	
+	# consome virgula
+	jal ra, verifica_virgula_instrucao
+	
+	# le rs1
+	jal ra, le_reg
+	add s4, a0, zero # s4 = rs1
+	
+	# consome virgula
+	jal ra, verifica_virgula_instrucao
+	
+	# le rs1
+	jal ra, le_reg
+	add s5, a0, zero # s4 = rs1
+	
+	# montagem da instrucao
+	li t0, 0x33 # opcode 0110011 -> bit final, entao sem deslocamento
+	
+	slli s3, s3, 7 # empurra rd para o bit 7
+	or t0, t0, s3 # carimba s3 em t0
+	
+	li t1, 0x2 # funct3 do slt È 2
+	slli t1, t1, 12 # funct3 no bit 12
+	or t0, t0, t1 # carimba em t0
+	
+	slli s4, s4, 15 # empurra rs1 para o bit 15
+	or t0, t0, s4 # carimba s4 em t0
+	
+	slli s5, s5, 20 # empurra rs2 para o bit 20
+	or t0, t0, s5 # carimba s5 em t0
+	
+	# funct3 … zero
+	
+	add a0, t0, zero # instrucao finalizada em a0
+	jal ra, grava_linha_mif
+	
+	j procura_quebra_linha
 
 implementacao_SLL:
-	jal ra, verifica_primeira_passagem
+	jal ra, verifica_primeira_passagem # verifica se estamos ainda na primeira passagem
 	li t0, 1
 	beq a0, t0, procura_quebra_linha
 	
-	la a0, str_sll
-    	j teste
+	# le rd (onde: mne rd, rs1, rs2)
+	jal ra, le_reg
+	add s3, a0, zero # s3 = rd
+	
+	# consome virgula
+	jal ra, verifica_virgula_instrucao
+	
+	# le rs1
+	jal ra, le_reg
+	add s4, a0, zero # s4 = rs1
+	
+	# consome virgula
+	jal ra, verifica_virgula_instrucao
+	
+	# le rs1
+	jal ra, le_reg
+	add s5, a0, zero # s4 = rs1
+	
+	# montagem da instrucao
+	li t0, 0x33 # opcode 0110011 -> bit final, entao sem deslocamento
+	
+	slli s3, s3, 7 # empurra rd para o bit 7
+	or t0, t0, s3 # carimba s3 em t0
+	
+	li t1, 0x1 # funct3 do sll È 1
+	slli t1, t1, 12 # funct3 no bit 12
+	or t0, t0, t1 # carimba em t0
+	
+	slli s4, s4, 15 # empurra rs1 para o bit 15
+	or t0, t0, s4 # carimba s4 em t0
+	
+	slli s5, s5, 20 # empurra rs2 para o bit 20
+	or t0, t0, s5 # carimba s5 em t0
+	
+	# funct7 … zero
+	
+	add a0, t0, zero # instrucao finalizada em a0
+	jal ra, grava_linha_mif
+	
+	j procura_quebra_linha
 
 implementacao_SRL:
-	jal ra, verifica_primeira_passagem
+	jal ra, verifica_primeira_passagem # verifica se estamos ainda na primeira passagem
 	li t0, 1
 	beq a0, t0, procura_quebra_linha
 	
-	la a0, str_srl
-    	j teste
+	# le rd (onde: mne rd, rs1, rs2)
+	jal ra, le_reg
+	add s3, a0, zero # s3 = rd
+	
+	# consome virgula
+	jal ra, verifica_virgula_instrucao
+	
+	# le rs1
+	jal ra, le_reg
+	add s4, a0, zero # s4 = rs1
+	
+	# consome virgula
+	jal ra, verifica_virgula_instrucao
+	
+	# le rs1
+	jal ra, le_reg
+	add s5, a0, zero # s4 = rs1
+	
+	# montagem da instrucao
+	li t0, 0x33 # opcode 0110011 -> bit final, entao sem deslocamento
+	
+	slli s3, s3, 7 # empurra rd para o bit 7
+	or t0, t0, s3 # carimba s3 em t0
+	
+	li t1, 0x5 # funct3 do srl È 5
+	slli t1, t1, 12 # funct3 no bit 12
+	or t0, t0, t1 # carimba em t0
+	
+	slli s4, s4, 15 # empurra rs1 para o bit 15
+	or t0, t0, s4 # carimba s4 em t0
+	
+	slli s5, s5, 20 # empurra rs2 para o bit 20
+	or t0, t0, s5 # carimba s5 em t0
+	
+	# funct7 … zero
+	
+	add a0, t0, zero # instrucao finalizada em a0
+	jal ra, grava_linha_mif
+	
+	j procura_quebra_linha
 
 implementacao_XOR:
-	jal ra, verifica_primeira_passagem
+	jal ra, verifica_primeira_passagem # verifica se estamos ainda na primeira passagem
 	li t0, 1
 	beq a0, t0, procura_quebra_linha
 	
-	la a0, str_xor
-    	j teste
+	# le rd (onde: mne rd, rs1, rs2)
+	jal ra, le_reg
+	add s3, a0, zero # s3 = rd
+	
+	# consome virgula
+	jal ra, verifica_virgula_instrucao
+	
+	# le rs1
+	jal ra, le_reg
+	add s4, a0, zero # s4 = rs1
+	
+	# consome virgula
+	jal ra, verifica_virgula_instrucao
+	
+	# le rs1
+	jal ra, le_reg
+	add s5, a0, zero # s4 = rs1
+	
+	# montagem da instrucao
+	li t0, 0x33 # opcode 0110011 -> bit final, entao sem deslocamento
+	
+	slli s3, s3, 7 # empurra rd para o bit 7
+	or t0, t0, s3 # carimba s3 em t0
+	
+	li t1, 0x4 # funct3 do xor È 4
+	slli t1, t1, 12 # funct3 no bit 12
+	or t0, t0, t1 # carimba em t0
+	
+	slli s4, s4, 15 # empurra rs1 para o bit 15
+	or t0, t0, s4 # carimba s4 em t0
+	
+	slli s5, s5, 20 # empurra rs2 para o bit 20
+	or t0, t0, s5 # carimba s5 em t0
+	
+	# funct7 … zero
+	
+	add a0, t0, zero # instrucao finalizada em a0
+	jal ra, grava_linha_mif
+	
+	j procura_quebra_linha
 
 implementacao_ADDI:
 	jal ra, verifica_primeira_passagem
 	li t0, 1
 	beq a0, t0, procura_quebra_linha
 	
-	la a0, str_addi
-    	j teste
-
+	# formato tipo i: mne rd, rs1, I
+	jal ra, le_reg # le rd
+	add s3, a0, zero # s3 = rd
+	jal ra, verifica_virgula_instrucao
+	
+	jal ra, le_reg # le rs1
+	add s4, a0, zero # s4 = rs1
+	jal ra, verifica_virgula_instrucao
+	
+	jal ra, le_numero # le I
+	add s5, a0, zero # s5 = I
+	
+	li t0, 0x13 # opcode -> 0010011 na pos 0
+	
+	slli s3, s3, 7 # rd para bit 7
+	or t0, t0, s3 # carimba
+	
+	slli s4, s4, 15 # rs1 para bit 15
+	or t0, t0, s4 # carimba rs1
+	
+	# nas instrucao tipo I, o imediato deve ter apenas 12 bits, consideraremos apenas os menos significativos
+	li t1, 0xFFF # 12 bits
+	and s5, s5, t1 # apenas onde temos bits 1 (nas 12 ultimas posicoes) ficar„o no registrador
+	slli s5, s5, 20 # pos 20
+	or t0, t0, s5 # carimba I
+	
+	add a0, t0, zero
+	jal ra, grava_linha_mif
+	
+	j procura_quebra_linha
+	
 implementacao_ANDI:
 	jal ra, verifica_primeira_passagem
 	li t0, 1
 	beq a0, t0, procura_quebra_linha
 	
-	la a0, str_andi
-    	j teste
+	# formato tipo i: mne rd, rs1, I
+	jal ra, le_reg # le rd
+	add s3, a0, zero # s3 = rd
+	jal ra, verifica_virgula_instrucao
+	
+	jal ra, le_reg # le rs1
+	add s4, a0, zero # s4 = rs1
+	jal ra, verifica_virgula_instrucao
+	
+	jal ra, le_numero # le I
+	add s5, a0, zero # s5 = I
+	
+	li t0, 0x13 # opcode -> 0010011 na pos 0
+	
+	li t1, 0x7 # funct3 do andi È 7
+	slli t1, t1, 12 # funct3 no bit 12
+	or t0, t0, t1 # carimba em t0
+	
+	slli s3, s3, 7 # rd para bit 7
+	or t0, t0, s3 # carimba
+	
+	slli s4, s4, 15 # rs1 para bit 15
+	or t0, t0, s4 # carimba rs1
+	
+	# nas instrucao tipo I, o imediato deve ter apenas 12 bits, consideraremos apenas os menos significativos
+	li t1, 0xFFF # 12 bits
+	and s5, s5, t1 # apenas onde temos bits 1 (nas 12 ultimas posicoes) ficar„o no registrador
+	slli s5, s5, 20 # pos 20
+	or t0, t0, s5 # carimba I
+	
+	add a0, t0, zero
+	jal ra, grava_linha_mif
+	
+	j procura_quebra_linha
 
 implementacao_JALR:
 	jal ra, verifica_primeira_passagem
@@ -1026,24 +1587,106 @@ implementacao_SLTI:
 	li t0, 1
 	beq a0, t0, procura_quebra_linha
 	
-	la a0, str_slti
-    	j teste
+	# formato tipo i: mne rd, rs1, I
+	jal ra, le_reg # le rd
+	add s3, a0, zero # s3 = rd
+	jal ra, verifica_virgula_instrucao
+	
+	jal ra, le_reg # le rs1
+	add s4, a0, zero # s4 = rs1
+	jal ra, verifica_virgula_instrucao
+	
+	jal ra, le_numero # le I
+	add s5, a0, zero # s5 = I
+	
+	li t0, 0x13 # opcode -> 0010011 na pos 0
+	
+	li t1, 0x2 # funct3 do andi È 2
+	slli t1, t1, 12 # funct3 no bit 12
+	or t0, t0, t1 # carimba em t0
+	
+	slli s3, s3, 7 # rd para bit 7
+	or t0, t0, s3 # carimba
+	
+	slli s4, s4, 15 # rs1 para bit 15
+	or t0, t0, s4 # carimba rs1
+	
+	# nas instrucao tipo I, o imediato deve ter apenas 12 bits, consideraremos apenas os menos significativos
+	li t1, 0xFFF # 12 bits
+	and s5, s5, t1 # apenas onde temos bits 1 (nas 12 ultimas posicoes) ficar„o no registrador
+	slli s5, s5, 20 # pos 20
+	or t0, t0, s5 # carimba I
+	
+	add a0, t0, zero
+	jal ra, grava_linha_mif
+	
+	j procura_quebra_linha
 
 implementacao_XORI:
 	jal ra, verifica_primeira_passagem
 	li t0, 1
 	beq a0, t0, procura_quebra_linha
 	
-	la a0, str_xori
-    	j teste
+	# formato tipo i: mne rd, rs1, I
+	jal ra, le_reg # le rd
+	add s3, a0, zero # s3 = rd
+	jal ra, verifica_virgula_instrucao
+	
+	jal ra, le_reg # le rs1
+	add s4, a0, zero # s4 = rs1
+	jal ra, verifica_virgula_instrucao
+	
+	jal ra, le_numero # le I
+	add s5, a0, zero # s5 = I
+	
+	li t0, 0x13 # opcode -> 0010011 na pos 0
+	
+	li t1, 0x4 # funct3 do xori È 4
+	slli t1, t1, 12 # funct3 no bit 12
+	or t0, t0, t1 # carimba em t0
+	
+	slli s3, s3, 7 # rd para bit 7
+	or t0, t0, s3 # carimba
+	
+	slli s4, s4, 15 # rs1 para bit 15
+	or t0, t0, s4 # carimba rs1
+	
+	# nas instrucao tipo I, o imediato deve ter apenas 12 bits, consideraremos apenas os menos significativos
+	li t1, 0xFFF # 12 bits
+	and s5, s5, t1 # apenas onde temos bits 1 (nas 12 ultimas posicoes) ficar„o no registrador
+	slli s5, s5, 20 # pos 20
+	or t0, t0, s5 # carimba I
+	
+	add a0, t0, zero
+	jal ra, grava_linha_mif
+	
+	j procura_quebra_linha
 
 implementacao_AUIPC:
 	jal ra, verifica_primeira_passagem
 	li t0, 1
 	beq a0, t0, procura_quebra_linha
 	
-	la a0, str_auipc
-    	j teste
+	jal ra, le_reg
+	add s3, a0, zero # rd
+	jal ra, verifica_virgula_instrucao
+	
+	jal ra, le_numero
+	add s4, a0, zero # imediato
+	
+	li t0, 0x17 # opcode AUIPC (0010111)
+	
+	slli s3, s3, 7 # rd no bit 7
+	or t0, t0, s3
+	
+	li t1, 0xFFFFF # AUIPC usa 20 bits
+	and s4, s4, t1
+	slli s4, s4, 12 # imediato nos bits 31-12
+	or t0, t0, s4
+	
+	add a0, t0, zero
+	jal ra, grava_linha_mif
+	j procura_quebra_linha
     	
 # implementacoes data
 implementacao_word:
@@ -1257,16 +1900,13 @@ fim_align:
 	j procura_quebra_linha
 	
 # strings
-
-
-
-
 # finalizador 0x00	
 implementacao_asciz:	
 implementacao_string:
 	li s5, 1 # flag pra adicionar o null no fim
 	j busca_primeira_aspa
-
+	
+# sem finalizador
 implementacao_ascii:
 	li s5, 0 # flag pra n√£o adicionar o null no fim
 
@@ -1330,8 +1970,10 @@ grava_string_buffer:
 
 procura_quebra_linha:
 	lbu t0, 0(s1)
-	beq t0, zero, fim_arquivo # fim de arquivo
+	bne t0, zero, continua_procura
+	j fim_arquivo
     
+continua_procura:    
     	li t1, 10 # '\n' quebra de linha
     	beq t0, t1, quebra_linha
     
@@ -1529,7 +2171,7 @@ loop_hex:
 	ble t3, t4, num_hex
 	
 letra_hex:
-	addi t3, t3, 55 # casa com o correspondente a A - F na table ascii
+	addi t3, t3, 87 # casa com o correspondente a a - f na table ascii
 	j salva_hex
 	
 num_hex:
@@ -1762,6 +2404,8 @@ loop_dec: #trata decimais
 	beq t0, t1, fim_numero
 	li t1, 13 # '\r'
 	beq t0, t1, fim_numero
+	li t1, 40 # '('                 
+	beq t0, t1, fim_numero
 	beq t0, zero, fim_numero # null
 	
 	li t1, 10
@@ -1894,7 +2538,7 @@ loop_sufixo:
 	li t1, 48 # '0'
 	blt t0, t1, fim_sufixo # se for menor que zero, finaliza
 	li t1, 57 # '9'
-	blt t0, t1, fim_sufixo 
+	bgt t0, t1, fim_sufixo 
 	
 	li t1, 10
 	mul s3, s3, t1 # sistema posicional
@@ -1906,4 +2550,25 @@ loop_sufixo:
 	j loop_sufixo
 	
 fim_sufixo:
+	jr ra
+	
+# procedimento verifica_virgula_instrucao
+# s1 = ponteiro do inicio da verificacao
+# s1 = saida do ponteiro apos virgula
+verifica_virgula_instrucao:
+	lbu t0, 0(s1)
+	li t1, 44 # ','
+	beq t0, t1, achou_virgula_inst
+	li t1, 32 # ' '
+	beq t0, t1, espaco_inst
+	li t1, 9 # '\t'
+	beq t0, t1, espaco_inst
+	jr ra # se n„o tem virgula ou espaco retorna
+	
+espaco_inst:
+	addi s1, s1, 1
+	j verifica_virgula_instrucao
+
+achou_virgula_inst:
+	addi s1,s1,1
 	jr ra
